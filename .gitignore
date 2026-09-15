@@ -1,0 +1,22 @@
+# Dữ liệu sinh ra khi chạy pipeline — không commit (nguyên tắc mục 8 docs/context.md)
+data/
+reports/
+logs/
+
+# Ngoại lệ: tập vàng gán nhãn tay PHẢI commit (mất là mất luôn)
+!annotations/gold/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Cấu hình Claude Code cục bộ (riêng từng máy, không chia sẻ)
+.claude/settings.local.json
+
+# OS / editor / venv
+.DS_Store
+Thumbs.db
+.venv/
+.idea/
+*.egg-info/
