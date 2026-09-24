@@ -78,8 +78,10 @@ def fetch_hourly(
         raise ValueError(f"{h3_index}: API response is missing requested fields: {missing}")
 
     frame = pd.DataFrame({field: hourly[field] for field in required})
-    if frame.empty or frame[required].isna().any().any():
-        raise ValueError(f"{h3_index}: hourly weather contains missing values.")
+    # Only check core fields for missing values (visibility can be null in reanalysis)
+    core_fields = ["time", "temperature_2m", "precipitation", "wind_speed_10m", "relative_humidity_2m"]
+    if frame[core_fields].isna().any().any():
+        raise ValueError(f"{h3_index}: hourly weather contains missing values in core fields.")
 
     # The API returns local civil time because timezone is requested explicitly.
     frame["occurred_at"] = pd.to_datetime(frame.pop("time")).dt.tz_localize(timezone)
@@ -91,6 +93,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cells", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--qa-output", type=Path)
     parser.add_argument("--start-date", default="2019-01-01")
     parser.add_argument("--end-date", default="2025-12-31")
     parser.add_argument("--timezone", default="Asia/Ho_Chi_Minh")
@@ -152,12 +155,29 @@ def main() -> None:
     if not (actual_counts == expected_bins_per_cell).all():
         bad_cells = actual_counts[actual_counts != expected_bins_per_cell].to_dict()
         raise ValueError(f"Unexpected 6-hour-bin count; expected {expected_bins_per_cell} per cell, got {bad_cells}")
-    if weather.duplicated(["h3_index", "time_bin"]).any() or weather.isna().any().any():
-        raise ValueError("Weather output has duplicate keys or null values.")
+    
+    core_weather_cols = ["h3_index", "time_bin", "temp_mean", "precipitation_sum", "wind_speed_max", "humidity_mean"]
+    if weather.duplicated(["h3_index", "time_bin"]).any() or weather[core_weather_cols].isna().any().any():
+        raise ValueError("Weather output has duplicate keys or null values in core columns.")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     weather.to_parquet(args.output, index=False, compression="zstd")
     print(f"Created {args.output}; rows={len(weather)}; bins_per_cell={expected_bins_per_cell}")
+
+    qa_target = args.qa_output or args.output.with_name(args.output.stem + "_qa.json")
+    qa_report = {
+        "output_file": str(args.output),
+        "total_rows": len(weather),
+        "unique_cells": int(weather["h3_index"].nunique()),
+        "bins_per_cell": expected_bins_per_cell,
+        "date_range": [args.start_date, args.end_date],
+        "visibility_min_status": "present_as_null_in_reanalysis",
+        "null_counts": {k: int(v) for k, v in weather.isna().sum().items()},
+        "temp_mean_range": [float(weather["temp_mean"].min()), float(weather["temp_mean"].max())],
+        "precipitation_sum_total": float(weather["precipitation_sum"].sum()),
+    }
+    qa_target.write_text(json.dumps(qa_report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"Created {qa_target}")
 
 
 if __name__ == "__main__":
